@@ -150,6 +150,9 @@ void UA_Server_delete(UA_Server *server) {
     pthread_mutex_destroy(&server->dispatchQueue_conditionMutex);
 #endif
 
+    /* Process new delayed callbacks from the cleanup */
+    UA_Server_cleanupDelayedCallbacks(server);
+
     /* Delete the timed work */
     UA_Timer_deleteMembers(&server->timer);
 

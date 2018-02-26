@@ -191,8 +191,20 @@ UA_Server_delayedCallback(UA_Server *server, UA_ServerCallback callback,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Delayed callback to free the subscription memory */
 static void
-processDelayedCallbacks(UA_Server *server) {
+freeCallback(UA_Server *server, void *data) {
+    UA_free(data);
+}
+
+/* TODO: Delayed free should never fail. This can be achieved by adding a prefix
+ * with the list pointers */
+UA_StatusCode
+UA_Server_delayedFree(UA_Server *server, void *data) {
+    return UA_Server_delayedCallback(server, freeCallback, data);
+}
+
+void UA_Server_cleanupDelayedCallbacks(UA_Server *server) {
     UA_DelayedCallback *dc, *dc_tmp;
     SLIST_FOREACH_SAFE(dc, &server->delayedCallbacks, next, dc_tmp) {
         SLIST_REMOVE(&server->delayedCallbacks, dc, UA_DelayedCallback, next);
@@ -361,7 +373,7 @@ UA_Server_run_iterate(UA_Server *server, UA_Boolean waitInternal) {
 #ifndef UA_ENABLE_MULTITHREADING
     /* Process delayed callbacks when all callbacks and
      * network events are done */
-    processDelayedCallbacks(server);
+    UA_Server_cleanupDelayedCallbacks(server);
 #endif
 
 #if defined(UA_ENABLE_DISCOVERY_MULTICAST) && !defined(UA_ENABLE_MULTITHREADING)
@@ -394,10 +406,7 @@ UA_Server_run_shutdown(UA_Server *server) {
         nl->stop(nl, server);
     }
 
-#ifndef UA_ENABLE_MULTITHREADING
-    /* Process remaining delayed callbacks */
-    processDelayedCallbacks(server);
-#else
+#ifdef UA_ENABLE_MULTITHREADING
     /* Shut down the workers */
     if(server->workers) {
         UA_LOG_INFO(server->config.logger, UA_LOGCATEGORY_SERVER,
@@ -412,13 +421,15 @@ UA_Server_run_shutdown(UA_Server *server) {
         server->workers = NULL;
     }
 
-    /* Execute the remaining callbacks in the dispatch queue.
-     * This also executes the delayed callbacks. */
+    /* Execute the remaining callbacks in the dispatch queue */
     emptyDispatchQueue(server);
 #endif
 
-    /* Stop multicast discovery */
+    /* Process remaining delayed callbacks */
+    UA_Server_cleanupDelayedCallbacks(server);
+
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
+    /* Stop multicast discovery */
     if(server->config.applicationDescription.applicationType ==
        UA_APPLICATIONTYPE_DISCOVERYSERVER)
         stopMulticastDiscoveryServer(server);
